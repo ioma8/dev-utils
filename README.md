@@ -71,3 +71,16 @@ axes
 **overall** — RGB Euclidean; cylindrical HSL; OKLab ΔE (perceptual stand-in for OKLCH).
 
 **axes** — closest token by that one channel only. Signed Δ is token − input. A single-channel match can be a different hue (e.g. `#ff0000` R matches `white`).
+
+# hueless
+
+Gray with the same OKLab lightness (L kept, a=b=0). Same perceived brightness; not the same HSL L, and not WCAG contrast.
+
+```bash
+uv run hueless.py '#e9802f'
+```
+
+```
+#e9802f   #e9802f  L=0.7038  C=0.1572
+gray      #9f9f9f  L=0.7025  C=0.0000
+```
