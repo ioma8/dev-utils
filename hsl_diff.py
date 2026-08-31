@@ -1,0 +1,155 @@
+#!/usr/bin/env -S uv run
+# /// script
+# requires-python = ">=3.12"
+# dependencies = []
+# ///
+"""Usage:
+  uv run hsl_diff.py '#3a3a3a' '#5c5c5c'
+  uv run hsl_diff.py '#3a3a3a' '#5c5c5c' '#8b0000'   # apply HSL + OKLab Δ onto third
+"""
+
+import argparse
+import colorsys
+import math
+import sys
+
+
+def parse_hex(s: str) -> tuple[int, int, int]:
+    s = s.removeprefix("#")
+    if len(s) == 3:
+        s = "".join(c * 2 for c in s)
+    if len(s) != 6:
+        raise SystemExit(f"not a hex color: {s!r}")
+    try:
+        return int(s[0:2], 16), int(s[2:4], 16), int(s[4:6], 16)
+    except ValueError:
+        raise SystemExit(f"not a hex color: {s!r}") from None
+
+
+def rgb_to_hsl(r: int, g: int, b: int) -> tuple[float, float, float]:
+    h, l, s = colorsys.rgb_to_hls(r / 255, g / 255, b / 255)
+    return h * 360, s * 100, l * 100
+
+
+def hue_delta(h1: float, h2: float) -> float:
+    d = (h2 - h1) % 360
+    return d - 360 if d > 180 else d
+
+
+def hsl_to_rgb(h: float, s: float, l: float) -> tuple[tuple[int, int, int], bool]:
+    clipped = s < 0 or s > 100 or l < 0 or l > 100
+    s, l = min(100.0, max(0.0, s)), min(100.0, max(0.0, l))
+    r, g, b = colorsys.hls_to_rgb((h % 360) / 360, l / 100, s / 100)
+    return (round(r * 255), round(g * 255), round(b * 255)), clipped
+
+
+def srgb_to_linear(c: float) -> float:
+    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+
+def rgb_to_oklab(r: int, g: int, b: int) -> tuple[float, float, float]:
+    r, g, b = (srgb_to_linear(x / 255) for x in (r, g, b))
+    l = 0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b
+    m = 0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b
+    s = 0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b
+    l_, m_, s_ = l ** (1 / 3), m ** (1 / 3), s ** (1 / 3)
+    return (
+        0.2104542553 * l_ + 0.7936177850 * m_ - 0.0040720468 * s_,
+        1.9779984951 * l_ - 2.4285922050 * m_ + 0.4505937099 * s_,
+        0.0259040371 * l_ + 0.7827717662 * m_ - 0.8086757660 * s_,
+    )
+
+
+def linear_to_srgb(c: float) -> float:
+    return 12.92 * c if c <= 0.0031308 else 1.055 * (c ** (1 / 2.4)) - 0.055
+
+
+def oklab_to_rgb(ok_l: float, ok_a: float, ok_b: float) -> tuple[tuple[int, int, int], bool]:
+    l_ = ok_l + 0.3963377774 * ok_a + 0.2158037573 * ok_b
+    m_ = ok_l - 0.1055613458 * ok_a - 0.0638541728 * ok_b
+    s_ = ok_l - 0.0894841775 * ok_a - 1.2914855480 * ok_b
+    l, m, s = l_**3, m_**3, s_**3
+    r = +4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s
+    g = -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s
+    b = -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s
+    clipped = False
+    out: list[int] = []
+    for c in (r, g, b):
+        srgb = linear_to_srgb(c)
+        if srgb < -1e-4 or srgb > 1 + 1e-4:
+            clipped = True
+        out.append(round(min(1.0, max(0.0, srgb)) * 255))
+    return (out[0], out[1], out[2]), clipped
+
+
+def rgb_to_hex(r: int, g: int, b: int) -> str:
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
+def fmt_hsl(h: float, s: float, l: float) -> str:
+    return f"H={h:6.1f}°  S={s:5.1f}%  L={l:5.1f}%"
+
+
+def fmt_oklab(L: float, a: float, b: float) -> str:
+    return f"L={L:.4f}  a={a:+.4f}  b={b:+.4f}"
+
+
+def fmt_delta(v: float, unit: str) -> str:
+    return f"{v:+.1f}{unit}"
+
+
+def main() -> None:
+    p = argparse.ArgumentParser(description="HSL and OKLab delta between two hex colors")
+    p.add_argument("from_hex")
+    p.add_argument("to_hex")
+    p.add_argument("onto_hex", nargs="?", help="apply HSL and OKLab Δ (from→to) onto this color")
+    args = p.parse_args()
+
+    rgb1, rgb2 = parse_hex(args.from_hex), parse_hex(args.to_hex)
+
+    h1, s1, l1 = rgb_to_hsl(*rgb1)
+    h2, s2, l2 = rgb_to_hsl(*rgb2)
+    dh, ds, dl = hue_delta(h1, h2), s2 - s1, l2 - l1
+
+    print("HSL")
+    print(f"  {args.from_hex:8}  {fmt_hsl(h1, s1, l1)}")
+    print(f"  {args.to_hex:8}  {fmt_hsl(h2, s2, l2)}")
+    print(f"  {'Δ':8}  H={fmt_delta(dh, '°'):>8}  S={fmt_delta(ds, '%'):>7}  L={fmt_delta(dl, '%'):>7}")
+
+    L1, a1, b1 = rgb_to_oklab(*rgb1)
+    L2, a2, b2 = rgb_to_oklab(*rgb2)
+    dL, da, db = L2 - L1, a2 - a1, b2 - b1
+    de = math.hypot(dL, math.hypot(da, db))
+
+    print("OKLab")
+    print(f"  {args.from_hex:8}  {fmt_oklab(L1, a1, b1)}")
+    print(f"  {args.to_hex:8}  {fmt_oklab(L2, a2, b2)}")
+    print(f"  {'Δ':8}  L={dL:+.4f}  a={da:+.4f}  b={db:+.4f}  ΔE={de:.4f}")
+
+    if not args.onto_hex:
+        return
+
+    rgb3 = parse_hex(args.onto_hex)
+    h3, s3, l3 = rgb_to_hsl(*rgb3)
+    rgb_hsl, hsl_clipped = hsl_to_rgb(h3 + dh, s3 + ds, l3 + dl)
+    hex_hsl = rgb_to_hex(*rgb_hsl)
+    hsl_note = "  clipped" if hsl_clipped else ""
+
+    L3, a3, b3 = rgb_to_oklab(*rgb3)
+    rgb_ok, ok_clipped = oklab_to_rgb(L3 + dL, a3 + da, b3 + db)
+    hex_ok = rgb_to_hex(*rgb_ok)
+    ok_note = "  clipped to sRGB" if ok_clipped else ""
+
+    print("apply HSL")
+    print(f"  {args.onto_hex:8}  {fmt_hsl(h3, s3, l3)}")
+    print(f"  {hex_hsl:8}  {fmt_hsl(*rgb_to_hsl(*rgb_hsl))}{hsl_note}")
+    print("apply OKLab")
+    print(f"  {args.onto_hex:8}  {fmt_oklab(L3, a3, b3)}")
+    print(f"  {hex_ok:8}  {fmt_oklab(*rgb_to_oklab(*rgb_ok))}{ok_note}")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except BrokenPipeError:
+        sys.exit(0)
