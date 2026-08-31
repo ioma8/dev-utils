@@ -48,7 +48,7 @@ First line is the source, second is the result. `clipped` / `clipped to sRGB` me
 
 # closest_token
 
-Nearest RAYNET palette token for one hex. Overall winner per space, then nearest on each axis. Hue is skipped when the input is near gray. Palette: `palette.json` (`khaki40` / `olive40` / `khaki10` stored as hyphenated names).
+Nearest palette token for one hex. Overall winner per space, then nearest on each axis. Hue is skipped when the input is near gray. Palette: `palette.json` (`khaki40` / `olive40` / `khaki10` stored as hyphenated names).
 
 ```bash
 uv run closest_token.py '#e9802f'
